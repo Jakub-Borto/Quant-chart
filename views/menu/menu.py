@@ -13,6 +13,8 @@ from views.footprint_chart.open_dialog import OpenChartDialog
 from core.settings import AppSettings, Keys
 from core.styles import PALETTE
 from views.footprint_chart.window import FootprintWindow
+from views.ohlcv_chart.open_dialog import OhlcvOpenDialog
+from views.ohlcv_chart.window import OhlcvWindow
 
 NO_ASSETS = "No assets found"
 
@@ -157,7 +159,7 @@ class MenuWindow(QMainWindow):
 
         charts = [
             ("Footprint Chart",  "Footprint & order flow",   lambda: self._open_chart("Footprint Chart", FootprintWindow)),
-            ("Simple Chart",     "OHLCV multi-timeframe",    lambda: self._coming_soon("Simple Chart")),
+            ("Simple Chart",     "OHLCV multi-timeframe",    self._open_ohlcv_chart),
             ("DOM Heatmap",      "Order book replay",        lambda: self._coming_soon("DOM Heatmap")),
             ("Options",          "Options analytics",        lambda: self._coming_soon("Options")),
         ]
@@ -317,6 +319,28 @@ class MenuWindow(QMainWindow):
         )
         if dialog.exec() and dialog.config is not None:
             window = window_cls(dialog.config)
+            window.show()
+            self.open_windows.append(window)
+
+    def _open_ohlcv_chart(self) -> None:
+        root = self.root_edit.text().strip()
+        if not root or not os.path.isdir(root):
+            QMessageBox.warning(self, "No data folder",
+                                "Pick a valid parquet folder first.")
+            return
+        dialog = OhlcvOpenDialog(
+            root=root,
+            futures_folder=self.futures_combo.currentText(),
+            options_folder=self.options_combo.currentText(),
+            default_type=self.futures_combo.currentText(),
+            default_asset=self.asset_combo.currentText(),
+            date=self.date_edit.date().toString("yyyy-MM-dd"),
+            time_start=self.start_edit.time().toString("HH:mm"),
+            time_end=self.end_edit.time().toString("HH:mm"),
+            parent=self,
+        )
+        if dialog.exec() and dialog.config is not None:
+            window = OhlcvWindow(dialog.config)
             window.show()
             self.open_windows.append(window)
 
