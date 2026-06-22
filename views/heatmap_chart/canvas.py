@@ -87,6 +87,8 @@ def _build_heat_lut(n=256):
 
 
 _HEAT_LUT = _build_heat_lut(256)
+# target on-screen width (px) of one pyramid bucket when zoomed out
+_TARGET_BUCKET_PX = 3.0
 # numpy RGBA copy of the LUT for vectorized image rendering
 _HEAT_LUT_NP = np.array(
     [[c.red(), c.green(), c.blue(), 255] for c in _HEAT_LUT], dtype=np.uint8)
@@ -127,9 +129,6 @@ class HeatmapCanvas(QWidget):
         self.layers = {"lines": True, "dom": True}
         self.settings = HeatmapSettings.load()
         self.pyramid = None
-        # below this slot width (px/second) the exact per-second render is too
-        # slow, so wide views render from the precomputed aggregation pyramid.
-        self._pyr_threshold = 2.0
 
         # drawing tools
         self.draw_mode = None
@@ -285,8 +284,17 @@ class HeatmapCanvas(QWidget):
         return float(r) if r > 0 else 1.0
 
     def _use_pyramid(self) -> bool:
-        return (self.pyramid is not None
-                and self.vt.slot_w() < self._pyr_threshold)
+        # Render from the precomputed pyramid at every zoom level (its 1s base
+        # is exact per-second). The exact per-column path is only a fallback
+        # for when the pyramid couldn't be built.
+        return self.pyramid is not None
+
+    def _pick_level(self) -> int:
+        """Pyramid level for the current zoom — aim for ~a few px per bucket so
+        we never oversample below pixel resolution when zoomed out."""
+        slot = self.vt.slot_w()
+        spp = (1.0 / slot) if slot > 0 else 1e9
+        return self.pyramid.pick_level(spp * _TARGET_BUCKET_PX)
 
     def _apply_cursor(self) -> None:
         if self.draw_mode == "delete":
@@ -523,9 +531,7 @@ class HeatmapCanvas(QWidget):
         d = self.data
         pyr = self.pyramid
         n = len(d)
-        slot = vt.slot_w()
-        secs_per_px = 1.0 / slot if slot > 0 else 1e9
-        L = pyr.pick_level(secs_per_px)
+        L = self._pick_level()
         lv = pyr.levels[L]
         B = lv["B"]
         depth = lv["depth"]            # int16 [nbuckets, nbins]
@@ -581,8 +587,7 @@ class HeatmapCanvas(QWidget):
         p.setClipRect(QRectF(PRICE_AXIS_W, vt.top, vt.right - PRICE_AXIS_W, vt.chart_h()))
         if pyramid and self.pyramid is not None:
             pyr = self.pyramid
-            slot = vt.slot_w()
-            L = pyr.pick_level(1.0 / slot if slot > 0 else 1e9)
+            L = self._pick_level()
             lv = pyr.levels[L]
             B = lv["B"]
             nbk = lv["depth"].shape[0]

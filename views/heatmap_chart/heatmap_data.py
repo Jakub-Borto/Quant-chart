@@ -40,13 +40,15 @@ _REF_PERCENTILE = 90.0
 _REF_FALLBACK = 200.0
 
 # ── Aggregation pyramid parameters ────────────────────────────────────
-_PYR_BASE_SEC = 2          # base bucket size (seconds)
+# Base bucket is 1s (exact per-second) so the most zoomed-in view loses no
+# detail; the pyramid is used at every zoom level. Steps: 1/4/16/64/256 s.
+_PYR_BASE_SEC = 1          # base bucket size (seconds)
 _PYR_FACTOR = 4            # each coarser level aggregates this many buckets
 _PYR_EXTRA_LEVELS = 4      # number of coarser levels above the base
 _PYR_MIN_MARGIN_TICKS = 256  # grid half-window beyond the traded range
 _PYR_MAX_DEPTH = 32767     # int16 clip
 _PYR_REF_PERCENTILE = 99.7  # depth percentile mapped near full color
-_CACHE_VERSION = 3
+_CACHE_VERSION = 4
 
 
 def _parse_depth(raw) -> dict:
