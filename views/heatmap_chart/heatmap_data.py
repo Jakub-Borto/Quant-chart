@@ -48,7 +48,7 @@ _PYR_EXTRA_LEVELS = 4      # number of coarser levels above the base
 _PYR_MIN_MARGIN_TICKS = 256  # grid half-window beyond the traded range
 _PYR_MAX_DEPTH = 32767     # int16 clip
 _PYR_REF_PERCENTILE = 99.7  # depth percentile mapped near full color
-_CACHE_VERSION = 4
+_CACHE_VERSION = 6
 
 
 def _parse_depth(raw) -> dict:
@@ -83,6 +83,9 @@ class HeatmapData:
         self.best_ask = (df["best_ask"].to_numpy(dtype=float)
                          if "best_ask" in df.columns else np.full(self.n, np.nan))
         self.session_starts = _session_starts(self.times)
+        # minute-of-day per second, for labelling columns ETH vs RTH
+        idx = df.index
+        self.tod_min = (idx.hour * 60 + idx.minute).to_numpy().astype(np.int32)
 
         # raw JSON books, parsed lazily
         self._bid_raw = (df["bid_depth"].to_numpy(dtype=object)
@@ -166,12 +169,14 @@ class HeatmapPyramid:
     """
 
     def __init__(self, p0: float, tick: float, nbins: int, levels: list,
-                 ref: float = 0.0) -> None:
+                 ref_eth: float = 0.0, ref_rth: float = 0.0) -> None:
         self.p0 = p0
         self.tick = tick
         self.nbins = nbins
-        self.levels = levels  # list of dict: {B, depth(int16 [nb,nbins]), bid, ask}
-        self.ref = ref        # color-normalization reference (full-color qty)
+        self.levels = levels  # list of dict: {B, depth(int16 [nb,nbins]), o, h, l, c}
+        # per-session color reference (full-color qty); RTH books are larger
+        self.ref_eth = ref_eth
+        self.ref_rth = ref_rth
 
     def pick_level(self, secs_per_pixel: float) -> int:
         """Index of the finest level whose bucket is >= secs_per_pixel."""
@@ -235,19 +240,25 @@ def _scatter_chunk(bid_slice, ask_slice, row_offset, p0, tick, nbins, B0):
     return row_offset // B0, base.reshape(nb, nbins)
 
 
-def _downsample(depth, bid, ask, factor):
+def _downsample(depth, o, h, l, c, factor):
+    """Coarsen one level: depth max-pooled; OHLC aggregated (O=first, H=max,
+    L=min, C=last) over each group of `factor` buckets."""
     nb = depth.shape[0]
     nb2 = (nb + factor - 1) // factor
     pad = nb2 * factor - nb
     if pad:
         depth = np.concatenate([depth, np.zeros((pad, depth.shape[1]), depth.dtype)])
-        bid = np.concatenate([bid, np.full(pad, np.nan, dtype=bid.dtype)])
-        ask = np.concatenate([ask, np.full(pad, np.nan, dtype=ask.dtype)])
+        # edge-pad OHLC so the final partial group keeps real first/last values
+        o = np.pad(o, (0, pad), mode="edge")
+        h = np.pad(h, (0, pad), mode="edge")
+        l = np.pad(l, (0, pad), mode="edge")
+        c = np.pad(c, (0, pad), mode="edge")
     d2 = depth.reshape(nb2, factor, depth.shape[1]).max(axis=1)
-    with np.errstate(all="ignore"):
-        b2 = np.nanmin(bid.reshape(nb2, factor), axis=1)
-        a2 = np.nanmax(ask.reshape(nb2, factor), axis=1)
-    return d2, b2.astype(np.float32), a2.astype(np.float32)
+    o2 = o.reshape(nb2, factor)[:, 0]
+    h2 = h.reshape(nb2, factor).max(axis=1)
+    l2 = l.reshape(nb2, factor).min(axis=1)
+    c2 = c.reshape(nb2, factor)[:, -1]
+    return d2, o2.astype(np.float32), h2.astype(np.float32), l2.astype(np.float32), c2.astype(np.float32)
 
 
 def _scatter_base_mp(data, p0, tick, nbins, B0, nb0, n_workers,
@@ -305,6 +316,7 @@ def _scatter_base_sp(data, p0, tick, nbins, B0, nb0, progress_cb=None, cancel_cb
 
 
 def _build_pyramid(data: "HeatmapData", tick: float, crop_ticks: int,
+                   rth_lo: int, rth_hi: int,
                    progress_cb=None, cancel_cb=None) -> Optional[HeatmapPyramid]:
     n = data.n
     fl = data.l[np.isfinite(data.l)]
@@ -335,33 +347,44 @@ def _build_pyramid(data: "HeatmapData", tick: float, crop_ticks: int,
     if base is None:
         return None
 
-    # bid/ask envelope per base bucket
-    bb = data.best_bid
-    ba = data.best_ask
+    # OHLC per base bucket (O=first, H=max, L=min, C=last over the bucket)
     pad0 = nb0 * B0 - n
-    if pad0:
-        bb = np.concatenate([bb, np.full(pad0, np.nan)])
-        ba = np.concatenate([ba, np.full(pad0, np.nan)])
-    with np.errstate(all="ignore"):
-        bid0 = np.nanmin(bb.reshape(nb0, B0), axis=1).astype(np.float32)
-        ask0 = np.nanmax(ba.reshape(nb0, B0), axis=1).astype(np.float32)
+    oo = np.pad(data.o, (0, pad0), mode="edge") if pad0 else data.o
+    hh = np.pad(data.h, (0, pad0), mode="edge") if pad0 else data.h
+    ll = np.pad(data.l, (0, pad0), mode="edge") if pad0 else data.l
+    cc = np.pad(data.c, (0, pad0), mode="edge") if pad0 else data.c
+    o0 = oo.reshape(nb0, B0)[:, 0].astype(np.float32)
+    h0 = hh.reshape(nb0, B0).max(axis=1).astype(np.float32)
+    l0 = ll.reshape(nb0, B0).min(axis=1).astype(np.float32)
+    c0 = cc.reshape(nb0, B0)[:, -1].astype(np.float32)
 
-    levels = [{"B": B0, "depth": base, "bid": bid0, "ask": ask0}]
-    cd, cb, ca, cB = base, bid0, ask0, B0
+    levels = [{"B": B0, "depth": base, "o": o0, "h": h0, "l": l0, "c": c0}]
+    cd, co, ch, cl, cc2, cB = base, o0, h0, l0, c0, B0
     for _ in range(_PYR_EXTRA_LEVELS):
         if cd.shape[0] < 2:
             break
-        cd, cb, ca = _downsample(cd, cb, ca, _PYR_FACTOR)
+        cd, co, ch, cl, cc2 = _downsample(cd, co, ch, cl, cc2, _PYR_FACTOR)
         cB *= _PYR_FACTOR
-        levels.append({"B": cB, "depth": cd, "bid": cb, "ask": ca})
+        levels.append({"B": cB, "depth": cd, "o": co, "h": ch, "l": cl, "c": cc2})
 
-    # color reference: a high percentile of resting size so typical liquidity
-    # stays dark and only large walls glow (Bookmap-style).
-    nz = base[base > 0]
-    ref = float(np.percentile(nz, _PYR_REF_PERCENTILE)) if nz.size else _REF_FALLBACK
-    ref = ref or _REF_FALLBACK
+    # per-session color reference: high percentile of resting size so typical
+    # liquidity stays dark and only large walls glow (Bookmap-style). RTH and
+    # ETH get separate refs because RTH books are far larger.
+    is_rth = (data.tod_min >= rth_lo) & (data.tod_min < rth_hi)
+    if base.shape[0] == n:
+        rth_rows, eth_rows = base[is_rth], base[~is_rth]
+    else:                       # base bucketed (B0>1) — fall back to all rows
+        rth_rows = eth_rows = base
 
-    return HeatmapPyramid(p0, tick, nbins, levels, ref=ref)
+    def _pct(grid):
+        nz = grid[grid > 0]
+        v = float(np.percentile(nz, _PYR_REF_PERCENTILE)) if nz.size else 0.0
+        return v or _REF_FALLBACK
+
+    ref_rth = _pct(rth_rows)
+    ref_eth = _pct(eth_rows)
+
+    return HeatmapPyramid(p0, tick, nbins, levels, ref_eth=ref_eth, ref_rth=ref_rth)
 
 
 # ── disk cache ─────────────────────────────────────────────────────────
@@ -382,13 +405,14 @@ def _source_signature(files) -> list:
     return sig
 
 
-def _build_params(crop_ticks: int) -> dict:
+def _build_params(crop_ticks: int, rth_lo: int, rth_hi: int) -> dict:
     return {
         "version": _CACHE_VERSION,
         "base": _PYR_BASE_SEC,
         "factor": _PYR_FACTOR,
         "extra": _PYR_EXTRA_LEVELS,
         "margin": max(int(crop_ticks), _PYR_MIN_MARGIN_TICKS),
+        "rth": [int(rth_lo), int(rth_hi)],
     }
 
 
@@ -407,12 +431,13 @@ def _load_cache(path: Path, files, params) -> Optional[HeatmapPyramid]:
                 levels.append({
                     "B": int(meta["B"][k]),
                     "depth": z[f"depth{k}"],
-                    "bid": z[f"bid{k}"],
-                    "ask": z[f"ask{k}"],
+                    "o": z[f"o{k}"], "h": z[f"h{k}"],
+                    "l": z[f"l{k}"], "c": z[f"c{k}"],
                 })
             return HeatmapPyramid(float(meta["p0"]), float(meta["tick"]),
                                   int(meta["nbins"]), levels,
-                                  ref=float(meta.get("ref", 0.0)))
+                                  ref_eth=float(meta.get("ref_eth", 0.0)),
+                                  ref_rth=float(meta.get("ref_rth", 0.0)))
     except (OSError, ValueError, KeyError):
         return None
 
@@ -424,22 +449,25 @@ def _save_cache(path: Path, pyr: HeatmapPyramid, files, params) -> None:
             "params": params,
             "sig": _source_signature(files),
             "p0": pyr.p0, "tick": pyr.tick, "nbins": pyr.nbins,
-            "ref": pyr.ref,
+            "ref_eth": pyr.ref_eth, "ref_rth": pyr.ref_rth,
             "nlevels": len(pyr.levels),
             "B": [lv["B"] for lv in pyr.levels],
         }
         arrays = {"meta": np.array(json.dumps(meta))}
         for k, lv in enumerate(pyr.levels):
             arrays[f"depth{k}"] = lv["depth"]
-            arrays[f"bid{k}"] = lv["bid"]
-            arrays[f"ask{k}"] = lv["ask"]
+            arrays[f"o{k}"] = lv["o"]
+            arrays[f"h{k}"] = lv["h"]
+            arrays[f"l{k}"] = lv["l"]
+            arrays[f"c{k}"] = lv["c"]
         np.savez_compressed(path, **arrays)
     except OSError:
         pass
 
 
 def build_or_load_pyramid(data: "HeatmapData", config, tick: float,
-                          crop_ticks: int = 256, progress_cb=None, cancel_cb=None,
+                          crop_ticks: int = 256, rth_lo: int = 570, rth_hi: int = 960,
+                          progress_cb=None, cancel_cb=None,
                           use_cache: bool = True) -> Optional[HeatmapPyramid]:
     """Load the cached aggregation pyramid, or build it (and cache it).
 
@@ -449,13 +477,14 @@ def build_or_load_pyramid(data: "HeatmapData", config, tick: float,
     if data is None or data.n == 0:
         return None
     files = getattr(data, "_source_files", None)
-    params = _build_params(crop_ticks)
+    params = _build_params(crop_ticks, rth_lo, rth_hi)
     path = _cache_path(config)
     if use_cache:
         pyr = _load_cache(path, files, params)
         if pyr is not None:
             return pyr
-    pyr = _build_pyramid(data, tick, crop_ticks, progress_cb=progress_cb, cancel_cb=cancel_cb)
+    pyr = _build_pyramid(data, tick, crop_ticks, rth_lo, rth_hi,
+                         progress_cb=progress_cb, cancel_cb=cancel_cb)
     if pyr is not None and use_cache:
         _save_cache(path, pyr, files, params)
     return pyr

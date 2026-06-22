@@ -62,9 +62,9 @@ class HeatmapWindow(QMainWindow):
 
         self.canvas = HeatmapCanvas()
         data = load_heatmap(config)
-        tick = tick_size_for(config.asset)
-        pyr = self._load_pyramid(data, config, tick)
-        self.canvas.set_data(data, tick, focus_last_session=False)
+        self._tick = tick_size_for(config.asset)
+        pyr = self._load_pyramid(data, config, self._tick)
+        self.canvas.set_data(data, self._tick, focus_last_session=False)
         self.canvas.set_pyramid(pyr)
 
         self.canvas.state_changed.connect(self._sync_buttons)
@@ -102,15 +102,22 @@ class HeatmapWindow(QMainWindow):
         def cancel():
             return holder["dlg"] is not None and holder["dlg"].wasCanceled()
 
+        s = self.canvas.settings
         try:
             pyr = build_or_load_pyramid(
                 data, config, tick,
-                crop_ticks=self.canvas.settings.crop_ticks,
+                crop_ticks=s.crop_ticks,
+                rth_lo=s.rth_start_min(), rth_hi=s.rth_end_min(),
                 progress_cb=progress, cancel_cb=cancel)
         finally:
             if holder["dlg"] is not None:
                 holder["dlg"].close()
         return pyr
+
+    def _rebuild_pyramid(self) -> None:
+        """Rebuild the pyramid after an RTH-window or crop change (settings)."""
+        pyr = self._load_pyramid(self.canvas.data, self.config, self._tick)
+        self.canvas.set_pyramid(pyr)
 
     def _build_toolbar(self) -> QWidget:
         bar = QWidget()
@@ -119,7 +126,7 @@ class HeatmapWindow(QMainWindow):
         row.setContentsMargins(8, 6, 8, 6)
         row.setSpacing(6)
 
-        self.btn_lines = self._toggle("Bid/Ask", lambda: self.canvas.toggle_layer("lines"))
+        self.btn_lines = self._toggle("OHLC", lambda: self.canvas.toggle_layer("lines"))
         self.btn_dom   = self._toggle("Ladder",  lambda: self.canvas.toggle_layer("dom"))
         row.addWidget(self.btn_lines)
         row.addWidget(self.btn_dom)
@@ -179,6 +186,7 @@ class HeatmapWindow(QMainWindow):
             dlg = HeatmapSettingsDialog(
                 self.canvas.settings,
                 on_change=self.canvas.apply_settings,
+                on_rebuild=self._rebuild_pyramid,
                 parent=self,
             )
             self._settings_dlg = dlg

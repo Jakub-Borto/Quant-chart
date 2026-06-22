@@ -29,6 +29,7 @@ C_AXIS_TEXT   = QColor(120, 135, 160)
 
 C_BID_LINE    = QColor(60, 220, 130)
 C_ASK_LINE    = QColor(235, 80, 80)
+C_OHLC        = QColor(200, 205, 215)   # gray price (OHLC) bars
 C_BID_TINT    = QColor(46, 200, 120)
 C_ASK_TINT    = QColor(220, 90, 90)
 C_DOM_TEXT    = QColor(225, 232, 242)
@@ -272,16 +273,24 @@ class HeatmapCanvas(QWidget):
     def _dom_w(self) -> int:
         return DOM_PANEL_W if self.layers.get("dom") else 0
 
-    def _ref(self) -> float:
-        r = self.settings.max_ref
-        if r and r > 0:
-            return float(r)
-        # the pyramid's percentile-based reference is well calibrated for the
-        # heatmap and is used by both render paths for consistent colors.
-        if self.pyramid is not None and getattr(self.pyramid, "ref", 0.0) > 0:
-            return float(self.pyramid.ref)
-        r = getattr(self.data, "default_ref", 0.0) or 0.0
-        return float(r) if r > 0 else 1.0
+    def _is_rth(self, sec_idx: int) -> bool:
+        tod = self.data.tod_min
+        i = max(0, min(len(tod) - 1, int(sec_idx)))
+        s = self.settings
+        return s.rth_start_min() <= int(tod[i]) < s.rth_end_min()
+
+    def _session_params(self, is_rth: bool):
+        """(ref, inv_contrast, high) for the ETH or RTH color scale."""
+        s = self.settings
+        if is_rth:
+            ref, contrast, high = s.rth_max_ref, s.rth_contrast, s.rth_high_contrast
+            auto = getattr(self.pyramid, "ref_rth", 0.0) if self.pyramid else 0.0
+        else:
+            ref, contrast, high = s.eth_max_ref, s.eth_contrast, s.eth_high_contrast
+            auto = getattr(self.pyramid, "ref_eth", 0.0) if self.pyramid else 0.0
+        if not (ref and ref > 0):
+            ref = auto or (getattr(self.data, "default_ref", 0.0) or 1.0)
+        return float(ref) if ref > 0 else 1.0, 1.0 / max(0.05, contrast), max(0.05, high)
 
     def _use_pyramid(self) -> bool:
         # Render from the precomputed pyramid at every zoom level (its 1s base
@@ -333,7 +342,7 @@ class HeatmapCanvas(QWidget):
         else:
             self._draw_heatmap(p)
         if self.layers["lines"]:
-            self._draw_touch_lines(p, pyramid=use_pyr)
+            self._draw_ohlc(p, pyramid=use_pyr)
         if self.layers["dom"]:
             self._draw_dom_panel(p)
         self._draw_lines(p)
@@ -430,11 +439,7 @@ class HeatmapCanvas(QWidget):
         if W <= 0 or H <= 0:
             return
 
-        ref = self._ref()
-        s = self.settings
-        inv_contrast = 1.0 / max(0.05, s.contrast)
-        high = max(0.05, s.high_contrast)
-        crop = max(1, int(s.crop_ticks))
+        crop = max(1, int(self.settings.crop_ticks))
         tick = self.tick_size
 
         vis = vt.price_span()
@@ -496,6 +501,7 @@ class HeatmapCanvas(QWidget):
                 continue
 
             rows = (chart_h * (1.0 - (prices - vmin) / vis)).astype(np.int32)
+            ref, inv_contrast, high = self._session_params(self._is_rth(i))
             t = np.clip(qtys / ref, 0.0, 1.0) ** inv_contrast
             t = t ** high
             idx = np.clip((t * 255).astype(np.int32), 0, 255)
@@ -555,10 +561,17 @@ class HeatmapCanvas(QWidget):
             return
 
         sub = depth[b0:b1 + 1, bin_lo:bin_hi + 1]          # [nb, nbp]
-        ref = self._ref()
-        s = self.settings
-        t = np.clip(sub.astype(np.float32) / ref, 0.0, 1.0) ** (1.0 / max(0.05, s.contrast))
-        t = t ** max(0.05, s.high_contrast)
+        # per-bucket session params (ETH vs RTH) from each bucket's first second
+        secs = np.clip(np.arange(b0, b1 + 1) * B, 0, n - 1)
+        tod = self.data.tod_min[secs]
+        is_rth = (tod >= self.settings.rth_start_min()) & (tod < self.settings.rth_end_min())
+        ref_e, inv_e, hi_e = self._session_params(False)
+        ref_r, inv_r, hi_r = self._session_params(True)
+        ref = np.where(is_rth, ref_r, ref_e).astype(np.float32)[:, None]
+        inv_c = np.where(is_rth, inv_r, inv_e).astype(np.float32)[:, None]
+        high = np.where(is_rth, hi_r, hi_e).astype(np.float32)[:, None]
+        t = np.clip(sub.astype(np.float32) / ref, 0.0, 1.0) ** inv_c
+        t = t ** high
         idx = np.clip((t * 255).astype(np.int32), 0, 255)
         colors = _HEAT_LUT_NP[idx]                          # [nb, nbp, 4]
         # orient image: rows = price bins descending (high price on top), cols = buckets
@@ -578,54 +591,53 @@ class HeatmapCanvas(QWidget):
         p.drawImage(target, qimg)
         p.restore()
 
-    # ── best bid/ask lines ────────────────────────────────────────────
-    def _draw_touch_lines(self, p, pyramid=False):
+    # ── price (gray OHLC bars) ─────────────────────────────────────────
+    def _draw_ohlc(self, p, pyramid=False):
+        """Gray OHLC bars: a vertical high→low line with a left tick for open
+        and a right tick for close, per time bucket. Shows O/H/L/C without
+        assuming whether the high or the low printed first within the bar.
+        """
         vt = self.vt
         d = self.data
         n = len(d)
-        p.save()
-        p.setClipRect(QRectF(PRICE_AXIS_W, vt.top, vt.right - PRICE_AXIS_W, vt.chart_h()))
         if pyramid and self.pyramid is not None:
-            pyr = self.pyramid
-            L = self._pick_level()
-            lv = pyr.levels[L]
+            lv = self.pyramid.levels[self._pick_level()]
             B = lv["B"]
-            nbk = lv["depth"].shape[0]
+            nbk = lv["o"].shape[0]
             first = max(0, vt.x_to_candle_floor(vt.left))
             last = min(n - 1, vt.x_to_candle_round(vt.right))
             b0 = first // B
             b1 = min(nbk - 1, last // B)
-            for arr, color in ((lv["bid"], C_BID_LINE), (lv["ask"], C_ASK_LINE)):
-                pen = QPen(color); pen.setWidthF(1.3); p.setPen(pen)
-                prev = None
-                for b in range(b0, b1 + 1):
-                    v = arr[b]
-                    if not math.isfinite(v):
-                        prev = None
-                        continue
-                    x = vt.candle_x(b * B + B / 2)
-                    y = vt.price_to_y(v)
-                    if prev is not None:
-                        p.drawLine(QPointF(prev[0], prev[1]), QPointF(x, y))
-                    prev = (x, y)
+            oo, hh, ll, cc = lv["o"], lv["h"], lv["l"], lv["c"]
+            spans = ((b, b * B, (b + 1) * B) for b in range(b0, b1 + 1))
         else:
             first = max(0, vt.x_to_candle_floor(vt.left))
             last = min(n - 1, vt.x_to_candle_round(vt.right))
-            for arr, color in ((d.best_bid, C_BID_LINE), (d.best_ask, C_ASK_LINE)):
-                pen = QPen(color)
-                pen.setWidthF(1.3)
-                p.setPen(pen)
-                prev = None
-                for i in range(first, last + 1):
-                    v = arr[i]
-                    if not math.isfinite(v):
-                        prev = None
-                        continue
-                    x = vt.candle_x(i) + vt.candle_w / 2
-                    y = vt.price_to_y(v)
-                    if prev is not None:
-                        p.drawLine(QPointF(prev[0], prev[1]), QPointF(x, y))
-                    prev = (x, y)
+            oo, hh, ll, cc = d.o, d.h, d.l, d.c
+            spans = ((i, i, i + 1) for i in range(first, last + 1))
+
+        p.save()
+        p.setClipRect(QRectF(PRICE_AXIS_W, vt.top, vt.right - PRICE_AXIS_W, vt.chart_h()))
+        pen = QPen(C_OHLC)
+        pen.setWidthF(1.0)
+        p.setPen(pen)
+        for k, c0, c1 in spans:
+            h = hh[k]
+            if not math.isfinite(h):
+                continue
+            o, l, c = oo[k], ll[k], cc[k]
+            x0 = vt.candle_x(c0)
+            x1 = vt.candle_x(c1)
+            xc = (x0 + x1) / 2
+            yh = vt.price_to_y(h)
+            yl = vt.price_to_y(l)
+            p.drawLine(QPointF(xc, yh), QPointF(xc, yl))
+            tick = min((x1 - x0) * 0.42, 7.0)
+            if tick >= 1.0:
+                yo = vt.price_to_y(o)
+                yc = vt.price_to_y(c)
+                p.drawLine(QPointF(xc - tick, yo), QPointF(xc, yo))   # open (left)
+                p.drawLine(QPointF(xc, yc), QPointF(xc + tick, yc))   # close (right)
         p.restore()
 
     # ── DOM ladder (rightmost visible second) ─────────────────────────
@@ -653,7 +665,7 @@ class HeatmapCanvas(QWidget):
         if ptop < pbot:
             ptop, pbot = pbot, ptop
         cell_h = vt.tick_px(self.tick_size)
-        ref = self._ref()
+        ref, _inv, _hi = self._session_params(self._is_rth(idx))
         show_text = cell_h >= 9
 
         bid, ask = d.levels(idx)
