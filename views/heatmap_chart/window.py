@@ -61,12 +61,8 @@ class HeatmapWindow(QMainWindow):
         self.showMaximized()
 
         self.canvas = HeatmapCanvas()
-        data = load_heatmap(config)
         self._tick = tick_size_for(config.asset)
-        pyr = self._load_pyramid(data, config, self._tick)
-        self.canvas.set_data(data, self._tick, focus_last_session=False)
-        self.canvas.set_pyramid(pyr)
-
+        self._reload_chart_data()
         self.canvas.state_changed.connect(self._sync_buttons)
 
         central = QWidget()
@@ -78,6 +74,19 @@ class HeatmapWindow(QMainWindow):
         self.setCentralWidget(central)
 
         self._sync_buttons()
+
+    def set_date(self, date: str) -> None:
+        """Reload this chart for a new anchor date (keeps its own days-back)."""
+        self.config.date = date
+        self.setWindowTitle(
+            f"Heatmap  ·  {self.config.asset}  ·  {self.config.dataset}  ·  {date}")
+        self._reload_chart_data()
+
+    def _reload_chart_data(self) -> None:
+        data = load_heatmap(self.config)
+        pyr = self._load_pyramid(data, self.config, self._tick)
+        self.canvas.set_data(data, self._tick, focus_last_session=False)
+        self.canvas.set_pyramid(pyr)
 
     def _load_pyramid(self, data, config, tick):
         """Load/build the aggregation pyramid, showing a progress dialog only

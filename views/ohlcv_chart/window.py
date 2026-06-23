@@ -67,15 +67,7 @@ class OhlcvWindow(QMainWindow):
         self.showMaximized()
 
         self.canvas = OhlcvCanvas()
-        data = load_ohlcv(config)
-        self.canvas.set_data(
-            data,
-            tick_size_for(config.asset),
-            focus_last_session=config.tf_unit in ("Minutes", "Hours"),
-        )
-        if data is not None and config.has_indicators():
-            self.canvas.set_indicators(load_ohlcv_indicators(config, data.times))
-
+        self._reload_chart_data()
         self.canvas.state_changed.connect(self._sync_buttons)
 
         central = QWidget()
@@ -87,6 +79,26 @@ class OhlcvWindow(QMainWindow):
         self.setCentralWidget(central)
 
         self._sync_buttons()
+
+    def set_date(self, date: str) -> None:
+        """Reload this chart for a new anchor date (keeps its own days-back)."""
+        self.config.date = date
+        self.setWindowTitle(
+            f"OHLCV  ·  {self.config.asset}  ·  {self.config.dataset}  ·  {date}")
+        self._reload_chart_data()
+
+    def _reload_chart_data(self) -> None:
+        config = self.config
+        data = load_ohlcv(config)
+        self.canvas.set_data(
+            data,
+            tick_size_for(config.asset),
+            focus_last_session=config.tf_unit in ("Minutes", "Hours"),
+        )
+        if data is not None and config.has_indicators():
+            self.canvas.set_indicators(load_ohlcv_indicators(config, data.times))
+        else:
+            self.canvas.set_indicators(None)
 
     def _build_toolbar(self) -> QWidget:
         bar = QWidget()

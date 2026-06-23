@@ -47,6 +47,7 @@ class MenuWindow(QMainWindow):
         root_layout.addWidget(self._build_title())
         root_layout.addWidget(self._build_data_group())
         root_layout.addWidget(self._build_selection_group())
+        root_layout.addWidget(self._build_control_group())
         root_layout.addWidget(self._build_charts_group())
         root_layout.addStretch(1)
 
@@ -129,6 +130,20 @@ class MenuWindow(QMainWindow):
         self.date_edit.setDisplayFormat("yyyy-MM-dd")
         self.date_edit.setDate(QDate.currentDate())
 
+        self.date_prev = QPushButton("◄")
+        self.date_prev.setFixedWidth(30)
+        self.date_prev.setToolTip("Previous day")
+        self.date_prev.clicked.connect(lambda: self._step_date(-1))
+        self.date_next = QPushButton("►")
+        self.date_next.setFixedWidth(30)
+        self.date_next.setToolTip("Next day")
+        self.date_next.clicked.connect(lambda: self._step_date(1))
+        date_row = QHBoxLayout()
+        date_row.setSpacing(6)
+        date_row.addWidget(self.date_prev)
+        date_row.addWidget(self.date_edit, 1)
+        date_row.addWidget(self.date_next)
+
         self.start_edit = QTimeEdit(QTime(0, 0))
         self.start_edit.setDisplayFormat("HH:mm")
         self.end_edit = QTimeEdit(QTime(23, 59))
@@ -144,13 +159,34 @@ class MenuWindow(QMainWindow):
         time_row.addWidget(self.end_edit)
 
         form.addRow(_label("Asset"), self.asset_combo)
-        form.addRow(_label("Date"), self.date_edit)
+        form.addRow(_label("Date"), date_row)
         form.addRow(_label("Time filter"), time_row)
 
         self.asset_combo.currentTextChanged.connect(self._on_asset_changed)
         self.date_edit.dateChanged.connect(self._on_date_changed)
         self.start_edit.timeChanged.connect(self._on_time_changed)
         self.end_edit.timeChanged.connect(self._on_time_changed)
+        return box
+
+    def _build_control_group(self) -> QGroupBox:
+        box = QGroupBox("Live Date Control")
+        layout = QVBoxLayout(box)
+        layout.setContentsMargins(10, 16, 10, 10)
+        layout.setSpacing(8)
+
+        hint = QLabel(
+            "Pushes the date selected above to every open chart at once. "
+            "Each chart reloads its own days-back ending at that date.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet(
+            f"color: {PALETTE['TEXT_DIM']}; background: transparent; font-size: 8pt;")
+        layout.addWidget(hint)
+
+        self.btn_load_date = QPushButton("↻  Load date to all open charts")
+        self.btn_load_date.setMinimumHeight(38)
+        self.btn_load_date.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_load_date.clicked.connect(self._load_date_to_charts)
+        layout.addWidget(self.btn_load_date)
         return box
 
     def _build_charts_group(self) -> QGroupBox:
@@ -370,6 +406,44 @@ class MenuWindow(QMainWindow):
 
     def _coming_soon(self, name: str) -> None:
         QMessageBox.information(self, name, f"{name} is not implemented yet.")
+
+    # ------------------------------------------------------------------
+    # Live date control
+    # ------------------------------------------------------------------
+    def _step_date(self, days: int) -> None:
+        """Move the selected date by +/-1 day (does not reload charts)."""
+        self.date_edit.setDate(self.date_edit.date().addDays(days))
+
+    def _live_windows(self) -> list:
+        """Open chart windows that are still alive and not closed."""
+        live = []
+        for w in self.open_windows:
+            try:
+                if w.isVisible() and hasattr(w, "set_date"):
+                    live.append(w)
+            except RuntimeError:   # underlying C++ object was deleted
+                continue
+        return live
+
+    def _load_date_to_charts(self) -> None:
+        date = self.date_edit.date().toString("yyyy-MM-dd")
+        windows = self._live_windows()
+        if not windows:
+            QMessageBox.information(
+                self, "No open charts",
+                "Open a chart first, then load a date into it.")
+            return
+        failed = 0
+        for w in windows:
+            try:
+                w.set_date(date)
+            except Exception:
+                failed += 1
+        if failed:
+            QMessageBox.warning(
+                self, "Reload",
+                f"Loaded {date} into {len(windows) - failed} chart(s); "
+                f"{failed} could not load (no data for that day?).")
 
 
 # ------------------------------------------------------------------

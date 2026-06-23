@@ -76,17 +76,7 @@ class FootprintWindow(QMainWindow):
         self.showMaximized()
 
         self.canvas = FootprintCanvas()
-        candles = load_candles(config)
-        self.canvas.set_data(
-            candles,
-            tick_size_for(config.asset),
-            focus_last_session=config.tf_unit in ("Minutes", "Hours"),
-        )
-        # indicators align to the candle bars
-        if candles is not None and config.has_indicators():
-            self.canvas.set_indicators(load_indicators(config, candles.times))
-        # big trades use their own days-back (from settings)
-        self._reload_big_trades()
+        self._reload_chart_data()
         self.canvas.state_changed.connect(self._sync_buttons)
 
         central = QWidget()
@@ -100,6 +90,27 @@ class FootprintWindow(QMainWindow):
         self._sync_buttons()
 
     # ------------------------------------------------------------------
+    def set_date(self, date: str) -> None:
+        """Reload this chart for a new anchor date (keeps its own days-back)."""
+        self.config.date = date
+        self.setWindowTitle(
+            f"Footprint  ·  {self.config.asset}  ·  {self.config.dataset}  ·  {date}")
+        self._reload_chart_data()
+
+    def _reload_chart_data(self) -> None:
+        config = self.config
+        candles = load_candles(config)
+        self.canvas.set_data(
+            candles,
+            tick_size_for(config.asset),
+            focus_last_session=config.tf_unit in ("Minutes", "Hours"),
+        )
+        if candles is not None and config.has_indicators():
+            self.canvas.set_indicators(load_indicators(config, candles.times))
+        else:
+            self.canvas.set_indicators(None)
+        self._reload_big_trades()
+
     def _reload_big_trades(self) -> None:
         if self.config.has_big_trades():
             self.canvas.set_big_trades(
