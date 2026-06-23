@@ -139,10 +139,9 @@ class HeatmapWindow(QMainWindow):
         self.btn_box    = self._icon("box",   "Box",                 lambda: self.canvas.set_draw_mode("box"))
         self.btn_long   = self._icon("long",  "Long position",       lambda: self.canvas.set_draw_mode("long"))
         self.btn_short  = self._icon("short", "Short position",      lambda: self.canvas.set_draw_mode("short"))
-        self.btn_edit   = self._toggle("Edit",   lambda: self.canvas.set_draw_mode("edit"))
         self.btn_delete = self._toggle("Delete", lambda: self.canvas.set_draw_mode("delete"))
         for b in (self.btn_hline, self.btn_ray, self.btn_vline, self.btn_box,
-                  self.btn_long, self.btn_short, self.btn_edit, self.btn_delete):
+                  self.btn_long, self.btn_short, self.btn_delete):
             row.addWidget(b)
 
         btn_clear = QPushButton("Clear")
@@ -204,5 +203,4 @@ class HeatmapWindow(QMainWindow):
         self.btn_box.setChecked(mode == "box")
         self.btn_long.setChecked(mode == "long")
         self.btn_short.setChecked(mode == "short")
-        self.btn_edit.setChecked(mode == "edit")
         self.btn_delete.setChecked(mode == "delete")

@@ -353,8 +353,6 @@ class FootprintCanvas(QWidget):
     def _apply_cursor(self) -> None:
         if self.draw_mode == "delete":
             self.setCursor(Qt.CursorShape.PointingHandCursor)
-        elif self.draw_mode == "edit":
-            self.setCursor(Qt.CursorShape.ArrowCursor)
         elif self.draw_mode:
             self.setCursor(Qt.CursorShape.CrossCursor)
         else:
@@ -398,7 +396,7 @@ class FootprintCanvas(QWidget):
         self._draw_positions(p)
         if cvd_on:
             self._draw_cvd_panel(p)
-        if self.draw_mode == "edit":
+        if self.draw_mode is None:
             self._draw_edit_handles(p)
         if self.draw_mode == "hline":
             self._draw_hline_preview(p)
@@ -1165,23 +1163,43 @@ class FootprintCanvas(QWidget):
         p.restore()
 
     # ── edit handles ──────────────────────────────────────────────────
+    def _h_handle(self, price):
+        # x from the widest label the price range can produce (stable), so the
+        # dot doesn't flicker horizontally as the dragged line's label changes.
+        return (PRICE_AXIS_W + 4 + self._price_label_w() + 6 + HANDLE_R,
+                self.vt.price_to_y(price))
+
+    def _price_label_w(self) -> float:
+        f = QFont("monospace"); f.setPixelSize(10)
+        hi = max(abs(self.vt.price_min), abs(self.vt.price_max), 1.0)
+        ts = f"{self.tick_size:.10g}"
+        dec = len(ts.split(".")[1]) if "." in ts else 0
+        sample = "0" * len(str(int(hi))) + ("." + "0" * dec if dec else "")
+        if self.vt.price_min < 0:
+            sample = "-" + sample
+        return QFontMetricsF(f).horizontalAdvance(sample)
+
+    def _v_handle(self, idx):
+        # below the time label so the dot doesn't cover it
+        return (self.vt.candle_x(idx) + self.vt.candle_w / 2, self.vt.top + 28)
+
     def _draw_edit_handles(self, p):
         vt = self.vt
         p.save()
         p.setClipRect(QRectF(PRICE_AXIS_W, vt.top, vt.right - PRICE_AXIS_W, vt.chart_h()))
-        for i, price in enumerate(self.h_lines):
-            y = vt.price_to_y(price)
-            hov = self.edit_hover and self.edit_hover["type"] == "h" and self.edit_hover["index"] == i
-            p.setBrush(C_EDIT_H_HOV if hov else C_EDIT_H)
-            p.setPen(QPen(QColor(255, 255, 255), 1))
-            p.drawRect(QRectF(PRICE_AXIS_W + 8, y - 5, 10, 10))
-        for i, idx in enumerate(self.v_lines):
-            x = vt.candle_x(idx) + vt.candle_w / 2
-            hov = self.edit_hover and self.edit_hover["type"] == "v" and self.edit_hover["index"] == i
-            p.setBrush(C_EDIT_V_HOV if hov else C_EDIT_V)
-            p.setPen(QPen(QColor(255, 255, 255), 1))
-            p.drawRect(QRectF(x - 5, vt.top + 8, 10, 10))
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        for i, price in enumerate(self.h_lines):
+            hx, hy = self._h_handle(price)
+            hov = self.edit_hover and self.edit_hover["type"] == "h" and self.edit_hover["index"] == i
+            p.setPen(QPen(QColor(255, 255, 255), 1.5))
+            p.setBrush(C_EDIT_H_HOV if hov else C_EDIT_H)
+            p.drawEllipse(QPointF(hx, hy), HANDLE_R, HANDLE_R)
+        for i, idx in enumerate(self.v_lines):
+            hx, hy = self._v_handle(idx)
+            hov = self.edit_hover and self.edit_hover["type"] == "v" and self.edit_hover["index"] == i
+            p.setPen(QPen(QColor(255, 255, 255), 1.5))
+            p.setBrush(C_EDIT_V_HOV if hov else C_EDIT_V)
+            p.drawEllipse(QPointF(hx, hy), HANDLE_R, HANDLE_R)
         for i, prof in enumerate(self.profiles):
             start_x = vt.candle_x(prof.start_idx) + vt.candle_w / 2
             end_x = vt.candle_x(prof.end_idx) + vt.candle_w / 2
@@ -1247,13 +1265,13 @@ class FootprintCanvas(QWidget):
     def _edit_target(self, cx, cy):
         vt = self.vt
         for i, price in enumerate(self.h_lines):
-            if abs(cy - vt.price_to_y(price)) <= HIT_THRESHOLD:
+            hx, hy = self._h_handle(price)
+            if math.hypot(cx - hx, cy - hy) <= HANDLE_R + 4:
                 return {"type": "h", "index": i}
         for i, idx in enumerate(self.v_lines):
-            x = vt.candle_x(idx) + vt.candle_w / 2
-            if abs(cx - x) <= HIT_THRESHOLD:
+            hx, hy = self._v_handle(idx)
+            if math.hypot(cx - hx, cy - hy) <= HANDLE_R + 4:
                 return {"type": "v", "index": i}
-        import math
         for i, prof in enumerate(self.profiles):
             start_x = vt.candle_x(prof.start_idx) + vt.candle_w / 2
             end_x = vt.candle_x(prof.end_idx) + vt.candle_w / 2
@@ -1334,13 +1352,6 @@ class FootprintCanvas(QWidget):
         if e.button() != Qt.MouseButton.LeftButton:
             return
 
-        if self.draw_mode == "edit":
-            target = self._edit_target(cx, cy)
-            if target:
-                self.edit_drag = target
-                self.setCursor(self._edit_cursor(target))
-            return
-
         if self.draw_mode == "box":
             self._box_anchor = self._box_point(cx, cy)
             self._box_current = self._box_anchor
@@ -1359,8 +1370,16 @@ class FootprintCanvas(QWidget):
             self._handle_draw_click(cx, cy)
             return
 
+        # default (no tool): grab a drawing handle if one is under the cursor
+        target = self._edit_target(cx, cy)
+        if target:
+            self.edit_drag = target
+            self.setCursor(self._edit_cursor(target))
+            self._show_tooltip = False
+            return
+
         # CVD panel divider -> resize drag
-        if self.draw_mode is None and self._cvd_divider_hit(cy):
+        if self._cvd_divider_hit(cy):
             self._cvd_drag = True
             self._show_tooltip = False
             return
@@ -1464,55 +1483,51 @@ class FootprintCanvas(QWidget):
             self.update()
             return
 
-        if self.draw_mode == "edit":
-            if self.edit_drag:
-                t = self.edit_drag["type"]
-                if t == "h":
-                    raw = vt.y_to_price(cy)
-                    self.h_lines[self.edit_drag["index"]] = round(raw / self.tick_size) * self.tick_size
-                    self._show_tooltip = False
-                elif t == "v":
-                    self.v_lines[self.edit_drag["index"]] = max(0, min(len(d) - 1, vt.x_to_candle_round(cx)))
-                    self._show_tooltip = False
-                elif t in ("box1", "box2"):
-                    box = self.boxes[self.edit_drag["index"]]
-                    idx, price = self._box_point(cx, cy)
-                    if t == "box1":
-                        box["idx1"], box["price1"] = idx, price
-                    else:
-                        box["idx2"], box["price2"] = idx, price
-                    self._show_tooltip = False
-                elif t == "ray":
-                    ray = self.rays[self.edit_drag["index"]]
-                    ray["idx"] = max(0, min(len(d) - 1, vt.x_to_candle_round(cx)))
-                    ray["price"] = round(vt.y_to_price(cy) / self.tick_size) * self.tick_size
-                    self._show_tooltip = False
-                elif t in ("pos_entry", "pos_tp", "pos_sl", "pos_width"):
-                    pos = self.positions[self.edit_drag["index"]]
-                    price = round(vt.y_to_price(cy) / self.tick_size) * self.tick_size
-                    if t == "pos_tp":
-                        pos["tp"] = price
-                    elif t == "pos_sl":
-                        pos["sl"] = price
-                    elif t == "pos_entry":           # translate the whole position
-                        delta = price - pos["entry"]
-                        pos["entry"] += delta
-                        pos["tp"] += delta
-                        pos["sl"] += delta
-                    else:  # pos_width
-                        pos["idx2"] = max(pos["idx1"] + 1,
-                                          min(len(d) - 1, vt.x_to_candle_round(cx)))
-                    self._show_tooltip = False
-                else:  # vp_start / vp_end -> keep candle info visible while dragging
-                    self._show_tooltip = True
-                self.update()
-            else:
+        if self.edit_drag:
+            t = self.edit_drag["type"]
+            if t == "h":
+                raw = vt.y_to_price(cy)
+                self.h_lines[self.edit_drag["index"]] = round(raw / self.tick_size) * self.tick_size
                 self._show_tooltip = False
-                target = self._edit_target(cx, cy)
-                if target != self.edit_hover:
-                    self.edit_hover = target
-                    self.setCursor(self._edit_cursor(target))
-                    self.update()
+            elif t == "v":
+                self.v_lines[self.edit_drag["index"]] = max(0, min(len(d) - 1, vt.x_to_candle_round(cx)))
+                self._show_tooltip = False
+            elif t in ("box1", "box2"):
+                box = self.boxes[self.edit_drag["index"]]
+                idx, price = self._box_point(cx, cy)
+                if t == "box1":
+                    box["idx1"], box["price1"] = idx, price
+                else:
+                    box["idx2"], box["price2"] = idx, price
+                self._show_tooltip = False
+            elif t == "ray":
+                ray = self.rays[self.edit_drag["index"]]
+                ray["idx"] = max(0, min(len(d) - 1, vt.x_to_candle_round(cx)))
+                ray["price"] = round(vt.y_to_price(cy) / self.tick_size) * self.tick_size
+                self._show_tooltip = False
+            elif t in ("pos_entry", "pos_tp", "pos_sl", "pos_width"):
+                pos = self.positions[self.edit_drag["index"]]
+                price = round(vt.y_to_price(cy) / self.tick_size) * self.tick_size
+                if t == "pos_tp":
+                    pos["tp"] = price
+                elif t == "pos_sl":
+                    pos["sl"] = price
+                elif t == "pos_entry":           # move the whole trade (both axes)
+                    delta = price - pos["entry"]
+                    pos["entry"] += delta
+                    pos["tp"] += delta
+                    pos["sl"] += delta
+                    width = pos["idx2"] - pos["idx1"]
+                    new_i1 = max(0, min(len(d) - 1 - width, vt.x_to_candle_round(cx)))
+                    pos["idx1"] = new_i1
+                    pos["idx2"] = new_i1 + width
+                else:  # pos_width
+                    pos["idx2"] = max(pos["idx1"] + 1,
+                                      min(len(d) - 1, vt.x_to_candle_round(cx)))
+                self._show_tooltip = False
+            else:  # vp_start / vp_end -> keep candle info visible while dragging
+                self._show_tooltip = True
+            self.update()
             return
 
         if self._dragging:
@@ -1543,8 +1558,17 @@ class FootprintCanvas(QWidget):
             self.update()
             return
 
-        # plain hover -> tooltip
-        self._show_tooltip = True
+        # default: hover a handle (suppress tooltip, show resize cursor) or show tooltip
+        target = self._edit_target(cx, cy)
+        if target != self.edit_hover:
+            self.edit_hover = target
+            self.setCursor(self._edit_cursor(target) if target
+                           else Qt.CursorShape.ArrowCursor)
+            self.update()
+        if target:
+            self._show_tooltip = False
+        else:
+            self._show_tooltip = True
         self.update()
 
     def mouseReleaseEvent(self, e):
@@ -1570,7 +1594,7 @@ class FootprintCanvas(QWidget):
             self._pos_current = None
             self.set_draw_mode(None)
             return
-        if self.draw_mode == "edit" and self.edit_drag:
+        if self.edit_drag:
             t = self.edit_drag["type"]
             if t in ("vp_start", "vp_end"):
                 cx = e.position().x()
@@ -1582,6 +1606,7 @@ class FootprintCanvas(QWidget):
                     self.profiles[self.edit_drag["index"]] = new_prof
                 self.update()
             self.edit_drag = None
+            self.setCursor(self._edit_cursor(self.edit_hover))
             return
         self._dragging = False
 
@@ -1621,11 +1646,7 @@ class FootprintCanvas(QWidget):
     def _draw_tooltip(self, p):
         vt = self.vt
         d = self.data
-        vp_dragging = (self.edit_drag is not None
-                       and self.edit_drag["type"] in ("vp_start", "vp_end"))
         if self.draw_mode in ("hline", "vline", "delete"):
-            return
-        if self.draw_mode == "edit" and not vp_dragging:
             return
         idx = vt.x_to_candle_floor(self._mx)
         if idx < 0 or idx >= len(d):
