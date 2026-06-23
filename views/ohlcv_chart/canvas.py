@@ -63,18 +63,15 @@ def _fmt(v: float) -> str:
     return f"{v:.10g}"
 
 
-def _nice_step(rough: float) -> float:
-    if rough <= 0:
-        return 1.0
-    mag = 10 ** math.floor(math.log10(rough))
-    norm = rough / mag
-    if norm < 1.5:
-        return mag
-    if norm < 3:
-        return 2 * mag
-    if norm < 7:
-        return 5 * mag
-    return 10 * mag
+def _tick_step(rough: float, tick_size: float) -> float:
+    if rough <= 0 or tick_size <= 0:
+        return tick_size if tick_size > 0 else 1.0
+    ticks = max(1, round(rough / tick_size))
+    nice = [1, 2, 4, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 2500, 5000, 10000]
+    for n in nice:
+        if n >= ticks:
+            return n * tick_size
+    return nice[-1] * tick_size
 
 
 class OhlcvCanvas(QWidget):
@@ -282,7 +279,7 @@ class OhlcvCanvas(QWidget):
         vis = vt.price_span()
         vmin = vt.center_price - vis / 2
         vmax = vt.center_price + vis / 2
-        step = _nice_step(vis / 10)
+        step = _tick_step(vis / 10, self.tick_size)
         pen = QPen(C_GRID)
         pen.setWidthF(0.5)
         start = math.ceil(vmin / step) * step

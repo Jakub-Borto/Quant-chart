@@ -25,8 +25,8 @@ class MenuWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Quant Chart")
-        self.setMinimumSize(560, 660)
-        self.resize(640, 720)
+        self.setMinimumSize(560, 910)
+        self.resize(640, 910)
 
         self.settings = AppSettings()
         self.open_windows: list = []
