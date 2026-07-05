@@ -274,10 +274,11 @@ class FootprintCanvas(QWidget):
     def toggle_layer(self, name: str) -> None:
         if name in self.layers:
             self.layers[name] = not self.layers[name]
-            # the two footprint types are mutually exclusive
-            if self.layers[name] and name in ("footprint", "volume"):
-                other = "volume" if name == "footprint" else "footprint"
-                self.layers[other] = False
+            # footprint, volume footprint, and passive are mutually exclusive
+            if self.layers[name] and name in ("footprint", "volume", "passive"):
+                for other in ("footprint", "volume", "passive"):
+                    if other != name:
+                        self.layers[other] = False
             self.state_changed.emit()
             self.update()
 
