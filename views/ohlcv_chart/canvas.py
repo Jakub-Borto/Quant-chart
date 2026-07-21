@@ -10,6 +10,7 @@ from PyQt6.QtCore import QPointF, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPen
 from PyQt6.QtWidgets import QWidget
 
+from core.annotations import draw_annotations
 from core.viewport import Viewport
 from views.ohlcv_chart.ohlcv_settings import OhlcvGeneralSettings
 
@@ -101,6 +102,7 @@ class OhlcvCanvas(QWidget):
         self.rays: list = []
         self.boxes: list = []
         self.positions: list = []
+        self.annotations: list = []  # plugin overlay dicts (core/annotations.py)
         self._box_anchor = None
         self._box_current = None
         self._pos_anchor = None
@@ -156,12 +158,17 @@ class OhlcvCanvas(QWidget):
         self.state_changed.emit()
         self.update()
 
+    def clear_annotations(self) -> None:
+        self.annotations.clear()
+        self.update()
+
     def clear_all(self) -> None:
         self.h_lines.clear()
         self.v_lines.clear()
         self.rays.clear()
         self.boxes.clear()
         self.positions.clear()
+        self.annotations.clear()
         self.hovered_line = None
         self._box_anchor = None
         self._box_current = None
@@ -237,6 +244,7 @@ class OhlcvCanvas(QWidget):
         self._draw_lines(p)
         self._draw_rays(p)
         self._draw_boxes(p)
+        draw_annotations(self, p)
         self._draw_positions(p)
         if self.draw_mode is None:
             self._draw_edit_handles(p)

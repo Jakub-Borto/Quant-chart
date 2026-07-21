@@ -6,6 +6,8 @@ from PyQt6.QtWidgets import (
 )
 
 from core.asset_info import tick_size_for
+from core.drawing_anchors import capture_anchors, restore_anchors
+from core.timeframes import TimeframeSelector
 from views.ohlcv_chart.ohlcv_config import OhlcvConfig
 from views.ohlcv_chart.ohlcv_data import load_ohlcv, load_ohlcv_indicators
 from views.ohlcv_chart.canvas import OhlcvCanvas
@@ -67,6 +69,8 @@ class OhlcvWindow(QMainWindow):
         self.showMaximized()
 
         self.canvas = OhlcvCanvas()
+        # drawing snapshot held over a failed load (no data for the new date)
+        self._pending_snapshot = None
         self._reload_chart_data()
         self.canvas.state_changed.connect(self._sync_buttons)
 
@@ -89,16 +93,29 @@ class OhlcvWindow(QMainWindow):
 
     def _reload_chart_data(self) -> None:
         config = self.config
+        snapshot = capture_anchors(self.canvas) or self._pending_snapshot
         data = load_ohlcv(config)
         self.canvas.set_data(
             data,
             tick_size_for(config.asset),
             focus_last_session=config.tf_unit in ("Minutes", "Hours"),
         )
+        if data is not None and len(data):
+            restore_anchors(self.canvas, snapshot)
+            self._pending_snapshot = None
+        else:
+            self._pending_snapshot = snapshot
         if data is not None and config.has_indicators():
             self.canvas.set_indicators(load_ohlcv_indicators(config, data.times))
         else:
             self.canvas.set_indicators(None)
+
+    def _set_timeframe(self, value: int, unit: str) -> None:
+        if (value, unit) == (self.config.tf_value, self.config.tf_unit):
+            return
+        self.config.tf_value = value
+        self.config.tf_unit = unit
+        self._reload_chart_data()
 
     def _build_toolbar(self) -> QWidget:
         bar = QWidget()
@@ -106,6 +123,13 @@ class OhlcvWindow(QMainWindow):
         row = QHBoxLayout(bar)
         row.setContentsMargins(8, 6, 8, 6)
         row.setSpacing(6)
+
+        # timeframe selector
+        self.tf_selector = TimeframeSelector(self.config, self._set_timeframe)
+        row.addWidget(self.tf_selector.value_combo)
+        row.addWidget(self.tf_selector.unit_combo)
+
+        row.addWidget(_sep())
 
         has_ind = self.config.has_indicators()
 

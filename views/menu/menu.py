@@ -17,6 +17,7 @@ from views.ohlcv_chart.open_dialog import OhlcvOpenDialog
 from views.ohlcv_chart.window import OhlcvWindow
 from views.heatmap_chart.open_dialog import HeatmapOpenDialog
 from views.heatmap_chart.window import HeatmapWindow
+from views.trade_replay.window import TradeReplayWindow
 
 NO_ASSETS = "No assets found"
 
@@ -25,8 +26,8 @@ class MenuWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Quant Chart")
-        self.setMinimumSize(560, 910)
-        self.resize(640, 910)
+        self.setMinimumSize(560, 990)
+        self.resize(640, 1000)
 
         self.settings = AppSettings()
         self.open_windows: list = []
@@ -200,9 +201,10 @@ class MenuWindow(QMainWindow):
             ("Simple Chart",     "OHLCV multi-timeframe",    self._open_ohlcv_chart),
             ("DOM Heatmap",      "Order book liquidity",     self._open_heatmap_chart),
             ("Options",          "Options analytics",        lambda: self._coming_soon("Options")),
+            ("Trade Replay",     "Backtest trade browser",   self._open_trade_replay),
         ]
 
-        positions = [(0, 0), (0, 1), (1, 0), (1, 1)]
+        positions = [(0, 0), (0, 1), (1, 0), (1, 1), (2, 0)]
         for (title, subtitle, handler), (row, col) in zip(charts, positions):
             btn = self._chart_button(title, subtitle)
             btn.clicked.connect(handler)
@@ -403,6 +405,12 @@ class MenuWindow(QMainWindow):
             window = HeatmapWindow(dialog.config)
             window.show()
             self.open_windows.append(window)
+
+    def _open_trade_replay(self) -> None:
+        window = TradeReplayWindow(menu=self)
+        window.show()
+        # no set_date attr -> _live_windows() keeps it out of date pushes
+        self.open_windows.append(window)
 
     def _coming_soon(self, name: str) -> None:
         QMessageBox.information(self, name, f"{name} is not implemented yet.")

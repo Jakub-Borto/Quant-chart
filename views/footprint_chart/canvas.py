@@ -10,6 +10,7 @@ from PyQt6.QtCore import QPointF, QRectF, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPen
 from PyQt6.QtWidgets import QWidget
 
+from core.annotations import draw_annotations
 from core.viewport import Viewport
 from views.footprint_chart.volume_profile import compute_profile
 from views.footprint_chart.footprint_settings import (
@@ -156,6 +157,7 @@ class FootprintCanvas(QWidget):
         self.boxes: list = []       # {"idx1","price1","idx2","price2"}
         self.positions: list = []   # {"dir","idx1","idx2","entry","tp","sl"}
         self.profiles: list = []    # Profile objects
+        self.annotations: list = [] # plugin overlay dicts (core/annotations.py)
         self.vp_start_idx = None
         self._box_anchor = None     # (idx, price) first corner while dragging
         self._box_current = None    # (idx, price) live opposite corner
@@ -296,6 +298,10 @@ class FootprintCanvas(QWidget):
         self.state_changed.emit()
         self.update()
 
+    def clear_annotations(self) -> None:
+        self.annotations.clear()
+        self.update()
+
     def clear_all(self) -> None:
         self.h_lines.clear()
         self.v_lines.clear()
@@ -303,6 +309,7 @@ class FootprintCanvas(QWidget):
         self.boxes.clear()
         self.positions.clear()
         self.profiles.clear()
+        self.annotations.clear()
         self.hovered_line = None
         self.vp_start_idx = None
         self._box_anchor = None
@@ -391,6 +398,7 @@ class FootprintCanvas(QWidget):
         self._draw_lines(p)
         self._draw_rays(p)
         self._draw_boxes(p)
+        draw_annotations(self, p)
         self._draw_positions(p)
         if cvd_on:
             self._draw_cvd_panel(p)

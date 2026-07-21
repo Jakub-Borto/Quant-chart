@@ -267,4 +267,136 @@ QMessageBox {{
 QMessageBox QLabel {{
     color: {PALETTE['TEXT_PRI']};
 }}
+
+/* ── Menus ─────────────────────────────────────────────────────────── */
+QMenu {{
+    background-color: {PALETTE['BG_PANEL']};
+    border: 1px solid {PALETTE['BORDER']};
+    color: {PALETTE['TEXT_PRI']};
+    padding: 4px;
+}}
+QMenu::item {{
+    padding: 5px 24px 5px 12px;
+    border-radius: 3px;
+}}
+QMenu::item:selected {{
+    background-color: {PALETTE['ACCENT']};
+}}
+QMenu::separator {{
+    height: 1px;
+    background: {PALETTE['BORDER']};
+    margin: 4px 6px;
+}}
+
+/* ── Tables ────────────────────────────────────────────────────────── */
+QTableView {{
+    background-color: {PALETTE['BG_BASE']};
+    alternate-background-color: {PALETTE['BG_PANEL']};
+    gridline-color: {PALETTE['BORDER']};
+    border: 1px solid {PALETTE['BORDER']};
+    selection-background-color: {PALETTE['BG_PRESS']};
+    selection-color: {PALETTE['TEXT_PRI']};
+    color: {PALETTE['TEXT_PRI']};
+}}
+QTableView::item {{
+    padding: 2px 6px;
+}}
+QHeaderView {{
+    background-color: {PALETTE['BG_PANEL']};
+}}
+QHeaderView::section {{
+    background-color: {PALETTE['BG_PANEL']};
+    color: {PALETTE['TEXT_SEC']};
+    border: none;
+    border-right: 1px solid {PALETTE['BORDER']};
+    border-bottom: 1px solid {PALETTE['BORDER']};
+    padding: 4px 6px;
+    font-weight: 600;
+}}
+QTableCornerButton::section {{
+    background-color: {PALETTE['BG_PANEL']};
+    border: 1px solid {PALETTE['BORDER']};
+}}
+
+/* ── Horizontal scrollbar (tables) ─────────────────────────────────── */
+QScrollBar:horizontal {{
+    background: {PALETTE['BG_BASE']};
+    height: 8px;
+    border-radius: 4px;
+}}
+QScrollBar::handle:horizontal {{
+    background: {PALETTE['BORDER']};
+    border-radius: 4px;
+    min-width: 30px;
+}}
+QScrollBar::handle:horizontal:hover {{
+    background: {PALETTE['ACCENT']};
+}}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+    width: 0;
+}}
+
+/* ── Checkboxes ────────────────────────────────────────────────────── */
+QCheckBox {{
+    color: {PALETTE['TEXT_PRI']};
+    spacing: 6px;
+}}
+QCheckBox::indicator {{
+    width: 14px;
+    height: 14px;
+    border: 1px solid {PALETTE['BORDER']};
+    border-radius: 3px;
+    background-color: {PALETTE['BG_INPUT']};
+}}
+QCheckBox::indicator:checked {{
+    background-color: {PALETTE['ACCENT']};
+    border: 1px solid {PALETTE['ACCENT']};
+}}
+
+/* ── Tabs ──────────────────────────────────────────────────────────── */
+QTabWidget::pane {{
+    border: 1px solid {PALETTE['BORDER']};
+    border-radius: 4px;
+    top: -1px;
+}}
+QTabBar::tab {{
+    background-color: {PALETTE['BG_PANEL']};
+    color: {PALETTE['TEXT_SEC']};
+    border: 1px solid {PALETTE['BORDER']};
+    border-bottom: none;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+    padding: 5px 14px;
+    margin-right: 2px;
+    font-weight: 600;
+}}
+QTabBar::tab:selected {{
+    background-color: {PALETTE['BG_HOVER']};
+    color: {PALETTE['TEXT_PRI']};
+}}
+QTabBar::tab:hover {{
+    color: {PALETTE['ACCENT_HOV']};
+}}
+
+/* ── Splitter ──────────────────────────────────────────────────────── */
+QSplitter::handle {{
+    background-color: {PALETTE['BORDER']};
+}}
+QSplitter::handle:vertical {{
+    height: 3px;
+}}
+QSplitter::handle:horizontal {{
+    width: 3px;
+}}
+
+/* ── Stat cards (trade replay) ─────────────────────────────────────── */
+QFrame[card="true"] {{
+    background-color: {PALETTE['BG_PANEL']};
+    border: 1px solid {PALETTE['BORDER']};
+    border-radius: 6px;
+}}
+QFrame[card="true"] QLabel {{
+    border: none;
+    background: transparent;
+}}
 """

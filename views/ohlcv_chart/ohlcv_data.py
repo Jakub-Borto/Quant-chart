@@ -24,6 +24,11 @@ class OhlcvData:
         self.c = df["close"].to_numpy(dtype=float)
         self.volume = df["volume"].to_numpy(dtype=float) if "volume" in df.columns else np.zeros(self.n)
         self.session_starts = _session_starts(self.times)
+        # epoch-ns of each bar start, for mapping timestamps -> candle index
+        if self.n:
+            self.times_ns = np.asarray(pd.DatetimeIndex(self.times).as_unit("ns").asi8)
+        else:
+            self.times_ns = np.array([], dtype="int64")
 
     def __len__(self) -> int:
         return self.n

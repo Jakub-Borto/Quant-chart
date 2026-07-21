@@ -15,6 +15,12 @@ class Keys:
     DATE = "data/date"             # stored as "yyyy-MM-dd"
     TIME_START = "data/time_start"  # stored as "HH:mm"
     TIME_END = "data/time_end"      # stored as "HH:mm"
+    REPLAY_DIR = "replay/trades_dir"    # folder with trades parquet files
+    REPLAY_FILE = "replay/last_file"    # last opened trades file (full path)
+    REPLAY_PARAMS = "replay/params"     # last plugin params string
+    REPLAY_PLUGIN_AUTOLOAD = "replay/plugin_autoload"  # load trade before plugin
+    REPLAY_PLUGIN = "replay/plugin"     # last selected plugin filename
+    REPLAY_PLUGIN_AUTORUN = "replay/plugin_autorun"    # run plugin on every load
 
 
 class AppSettings:

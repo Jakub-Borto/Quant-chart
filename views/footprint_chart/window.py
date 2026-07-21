@@ -5,12 +5,16 @@ and the canvas. Loads candle, indicator, and big-trade data on open.
 """
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
+import numpy as np
 from PyQt6.QtWidgets import (
-    QComboBox, QHBoxLayout, QLabel, QMainWindow, QMenu, QPushButton,
-    QVBoxLayout, QWidget,
+    QComboBox, QHBoxLayout, QLabel, QMainWindow, QMenu,
+    QPushButton, QVBoxLayout, QWidget,
 )
 
 from core.asset_info import tick_size_for
+from core.drawing_anchors import capture_anchors, restore_anchors, times_ns_of
+from core.timeframes import TimeframeSelector
+from views.footprint_chart.volume_profile import compute_profile
 from views.footprint_chart.footprint_config import FootprintConfig
 from views.footprint_chart.footprint_data import (
     load_candles, load_indicators, load_big_trades, load_composite_volume,
@@ -76,6 +80,9 @@ class FootprintWindow(QMainWindow):
         self.showMaximized()
 
         self.canvas = FootprintCanvas()
+        # drawing snapshots held over a failed load (no data for the new date)
+        self._pending_snapshot = None
+        self._pending_profiles = None
         self._reload_chart_data()
         self.canvas.state_changed.connect(self._sync_buttons)
 
@@ -99,17 +106,64 @@ class FootprintWindow(QMainWindow):
 
     def _reload_chart_data(self) -> None:
         config = self.config
+        snapshot = capture_anchors(self.canvas) or self._pending_snapshot
+        profile_snap = self._capture_profiles()
+        if profile_snap is None:
+            profile_snap = self._pending_profiles
         candles = load_candles(config)
         self.canvas.set_data(
             candles,
             tick_size_for(config.asset),
             focus_last_session=config.tf_unit in ("Minutes", "Hours"),
         )
+        if candles is not None and len(candles):
+            restore_anchors(self.canvas, snapshot)
+            self._restore_profiles(profile_snap)
+            self._pending_snapshot = None
+            self._pending_profiles = None
+        else:
+            self._pending_snapshot = snapshot
+            self._pending_profiles = profile_snap
         if candles is not None and config.has_indicators():
             self.canvas.set_indicators(load_indicators(config, candles.times))
         else:
             self.canvas.set_indicators(None)
         self._reload_big_trades()
+
+    def _set_timeframe(self, value: int, unit: str) -> None:
+        if (value, unit) == (self.config.tf_value, self.config.tf_unit):
+            return
+        self.config.tf_value = value
+        self.config.tf_unit = unit
+        self._reload_chart_data()
+
+    def _capture_profiles(self):
+        """Volume profiles as (ts_start, ts_end) pairs; None if no data."""
+        d = self.canvas.data
+        if d is None or not len(d):
+            return None
+        t = times_ns_of(d)
+        snap = []
+        for prof in self.canvas.profiles:
+            i1 = int(np.clip(prof.start_idx, 0, len(t) - 1))
+            i2 = int(np.clip(prof.end_idx, 0, len(t) - 1))
+            snap.append((int(t[i1]), int(t[i2])))
+        return snap
+
+    def _restore_profiles(self, snap) -> None:
+        """Recompute captured profiles on the (new) candle array."""
+        if snap is None:
+            return
+        d = self.canvas.data
+        t = times_ns_of(d)
+        new = []
+        for ts1, ts2 in snap:
+            i1 = int(np.clip(np.searchsorted(t, ts1, side="right") - 1, 0, len(t) - 1))
+            i2 = int(np.clip(np.searchsorted(t, ts2, side="right") - 1, 0, len(t) - 1))
+            prof = compute_profile(d, min(i1, i2), max(i1, i2), self.canvas.tick_size)
+            if prof is not None:
+                new.append(prof)
+        self.canvas.profiles[:] = new
 
     def _reload_big_trades(self) -> None:
         if self.config.has_big_trades():
@@ -141,6 +195,13 @@ class FootprintWindow(QMainWindow):
         row = QHBoxLayout(bar)
         row.setContentsMargins(8, 6, 8, 6)
         row.setSpacing(6)
+
+        # timeframe selector
+        self.tf_selector = TimeframeSelector(self.config, self._set_timeframe)
+        row.addWidget(self.tf_selector.value_combo)
+        row.addWidget(self.tf_selector.unit_combo)
+
+        row.addWidget(_sep())
 
         # footprint layer toggles
         self.btn_footprint = self._toggle("Footprint", lambda: self.canvas.toggle_layer("footprint"))
