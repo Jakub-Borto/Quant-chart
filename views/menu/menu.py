@@ -17,6 +17,8 @@ from views.ohlcv_chart.open_dialog import OhlcvOpenDialog
 from views.ohlcv_chart.window import OhlcvWindow
 from views.heatmap_chart.open_dialog import HeatmapOpenDialog
 from views.heatmap_chart.window import HeatmapWindow
+from views.options_chart.open_dialog import OptionsOpenDialog
+from views.options_chart.window import OptionsWindow
 from views.trade_replay.window import TradeReplayWindow
 
 NO_ASSETS = "No assets found"
@@ -200,7 +202,7 @@ class MenuWindow(QMainWindow):
             ("Footprint Chart",  "Footprint & order flow",   lambda: self._open_chart("Footprint Chart", FootprintWindow)),
             ("Simple Chart",     "OHLCV multi-timeframe",    self._open_ohlcv_chart),
             ("DOM Heatmap",      "Order book liquidity",     self._open_heatmap_chart),
-            ("Options",          "Options analytics",        lambda: self._coming_soon("Options")),
+            ("Options",          "Dealer exposure by strike", self._open_options_chart),
             ("Trade Replay",     "Backtest trade browser",   self._open_trade_replay),
         ]
 
@@ -406,14 +408,33 @@ class MenuWindow(QMainWindow):
             window.show()
             self.open_windows.append(window)
 
+    def _open_options_chart(self) -> None:
+        root = self.root_edit.text().strip()
+        if not root or not os.path.isdir(root):
+            QMessageBox.warning(self, "No data folder",
+                                "Pick a valid parquet folder first.")
+            return
+        dialog = OptionsOpenDialog(
+            root=root,
+            futures_folder=self.futures_combo.currentText(),
+            options_folder=self.options_combo.currentText(),
+            default_type=self.options_combo.currentText(),
+            default_asset=self.asset_combo.currentText(),
+            date=self.date_edit.date().toString("yyyy-MM-dd"),
+            time_start=self.start_edit.time().toString("HH:mm"),
+            time_end=self.end_edit.time().toString("HH:mm"),
+            parent=self,
+        )
+        if dialog.exec() and dialog.config is not None:
+            window = OptionsWindow(dialog.config)
+            window.show()
+            self.open_windows.append(window)
+
     def _open_trade_replay(self) -> None:
         window = TradeReplayWindow(menu=self)
         window.show()
         # no set_date attr -> _live_windows() keeps it out of date pushes
         self.open_windows.append(window)
-
-    def _coming_soon(self, name: str) -> None:
-        QMessageBox.information(self, name, f"{name} is not implemented yet.")
 
     # ------------------------------------------------------------------
     # Live date control
