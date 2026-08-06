@@ -138,9 +138,14 @@ class OptionsCanvas(QWidget):
         vt = self.vt
         m = 1.0
         if res is not None:
-            # cover both segment extents (primary alone and stacked total)
-            hi = max(np.abs(res.total).max(initial=0.0),
-                     np.abs(res.primary).max(initial=0.0))
+            if res.split:
+                # both sides drawn un-netted: cover the larger of the two stacks
+                hi = max(np.abs(res.put_part).max(initial=0.0),
+                         np.abs(res.call_part).max(initial=0.0))
+            else:
+                # cover both segment extents (primary alone and stacked total)
+                hi = max(np.abs(res.total).max(initial=0.0),
+                         np.abs(res.primary).max(initial=0.0))
             if np.isfinite(hi) and hi > 0:
                 m = hi * 1.1
         vt.price_min = -m
@@ -256,6 +261,22 @@ class OptionsCanvas(QWidget):
         hi = min(d.n_strikes - 1, vt.x_to_candle_floor(vt.right) + 1)
         return range(lo, hi + 1)
 
+    def _bar(self, p, x, bar_w, y0, prim, fall, dim):
+        """One primary bar from the baseline + a dimmed stacked fallback segment."""
+        vt = self.vt
+        if prim != 0.0:
+            y1 = vt.price_to_y(prim)
+            c = C_POS if prim >= 0 else C_NEG
+            p.setBrush(c)
+            p.drawRect(QRectF(x, min(y0, y1), bar_w, abs(y1 - y0)))
+        if fall != 0.0:
+            ya = vt.price_to_y(prim)
+            yb = vt.price_to_y(prim + fall)
+            c = QColor(C_POS if fall >= 0 else C_NEG)
+            c.setAlphaF(c.alphaF() * dim)
+            p.setBrush(c)
+            p.drawRect(QRectF(x, min(ya, yb), bar_w, abs(yb - ya)))
+
     def _draw_bars(self, p):
         vt = self.vt
         res = self.result
@@ -266,21 +287,15 @@ class OptionsCanvas(QWidget):
         bar_w = vt.candle_w * 0.8
         dim = max(0.0, min(1.0, self.settings.dim_factor))
         for i in self._visible_slots():
-            prim = res.primary[i]
-            fall = res.fallback[i]
             x = vt.candle_x(i) + (vt.candle_w - bar_w) / 2
-            if prim != 0.0:
-                y1 = vt.price_to_y(prim)
-                c = C_POS if prim >= 0 else C_NEG
-                p.setBrush(c)
-                p.drawRect(QRectF(x, min(y0, y1), bar_w, abs(y1 - y0)))
-            if fall != 0.0:
-                ya = vt.price_to_y(prim)
-                yb = vt.price_to_y(prim + fall)
-                c = QColor(C_POS if fall >= 0 else C_NEG)
-                c.setAlphaF(c.alphaF() * dim)
-                p.setBrush(c)
-                p.drawRect(QRectF(x, min(ya, yb), bar_w, abs(yb - ya)))
+            if res.split:
+                # un-netted: put stack up (green) AND call stack down (red)
+                self._bar(p, x, bar_w, y0,
+                          res.put_part[i] - res.put_fb[i], res.put_fb[i], dim)
+                self._bar(p, x, bar_w, y0,
+                          res.call_part[i] - res.call_fb[i], res.call_fb[i], dim)
+            else:
+                self._bar(p, x, bar_w, y0, res.primary[i], res.fallback[i], dim)
         p.restore()
 
     def _draw_underlying_line(self, p):
@@ -382,7 +397,8 @@ class OptionsCanvas(QWidget):
         if res.fallback[i] != 0.0:
             lines.append((f"Flow {_fmt_value(res.primary[i], dollars)}   "
                           f"Est {_fmt_value(res.fallback[i], dollars)}", C_TEXT_DIM))
-        lines.append((f"{int(res.n_contracts[i])} contracts", C_TEXT_DIM))
+        lines.append((f"OI {int(res.oi_total[i]):,} · {int(res.n_contracts[i])} series",
+                      C_TEXT_DIM))
         f = QFont("monospace")
         f.setPixelSize(11)
         fm = QFontMetricsF(f)

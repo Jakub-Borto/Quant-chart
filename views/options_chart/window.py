@@ -9,21 +9,13 @@ from PyQt6.QtWidgets import (
 from core.styles import PALETTE
 from views.options_chart.canvas import OptionsCanvas
 from views.options_chart.options_compute import (
-    EXPIRY_BUCKETS, ExposureParams, compute_exposure,
+    EXPIRY_BUCKETS, GREEKS, OI_SRCS, SIGNS, TOTAL_MODES, UNITS,
+    ExposureParams, compute_exposure,
 )
 from views.options_chart.options_config import OptionsConfig
 from views.options_chart.options_data import load_options_day
 from views.options_chart.options_settings import OptionsSettings
 from views.options_chart.settings_dialog import OptionsSettingsDialog
-
-GREEKS = [("Delta", "delta"), ("Gamma", "gamma"), ("Vanna", "vanna"), ("Charm", "charm")]
-OI_SRCS = [("Open Interest", "open_interest"), ("Est. OI", "est_oi"),
-           ("Dealer Flow", "dealer_flow")]
-SIGNS = [("Calls long / Puts short", "calls_long"),
-         ("Puts long / Calls short", "puts_long"),
-         ("All long (gross)", "all_long")]
-UNITS = [("$ / 1% move", "pct"), ("$ / 1 point", "point"), ("Contracts", "contracts")]
-
 
 def _sep() -> QWidget:
     w = QWidget()
@@ -68,7 +60,7 @@ class OptionsWindow(QMainWindow):
     # ── data loading ──────────────────────────────────────────────────
     def _set_title(self) -> None:
         c = self.config
-        self.setWindowTitle(f"Options  ·  {c.asset}  ·  {c.dataset}  ·  {c.date}")
+        self.setWindowTitle(f"Dealer Exposure  ·  {c.asset}  ·  {c.dataset}  ·  {c.date}")
 
     def _reload_chart_data(self) -> None:
         prev_tod = None
@@ -131,14 +123,17 @@ class OptionsWindow(QMainWindow):
     # ── exposure recompute ────────────────────────────────────────────
     def _params(self) -> ExposureParams:
         src = self.src_combo.currentData()
-        # dealer_flow ignores the sign assumption (own exposure algorithm);
-        # pin the field so the cache key doesn't fragment
-        sign = "calls_long" if src == "dealer_flow" else self.sign_combo.currentData()
+        greek = self.greek_combo.currentData()
+        # dealer_flow and the raw-OI modes ignore the sign assumption; raw-OI modes
+        # are contracts-only — pin the fields so the cache key doesn't fragment
+        sign = ("calls_long" if src == "dealer_flow" or greek in TOTAL_MODES
+                else self.sign_combo.currentData())
+        units = "contracts" if greek in TOTAL_MODES else self.units_combo.currentData()
         return ExposureParams(
-            greek=self.greek_combo.currentData(),
+            greek=greek,
             oi_source=src,
             sign_mode=sign,
-            units=self.units_combo.currentData(),
+            units=units,
             bucket=self.expiry_combo.currentData(),
             r=self.settings.r(),
         )
@@ -154,7 +149,10 @@ class OptionsWindow(QMainWindow):
         self.time_label.setText(self.day.times[i].strftime("%a %H:%M"))
 
     def _on_param_changed(self) -> None:
-        self.sign_combo.setEnabled(self.src_combo.currentData() != "dealer_flow")
+        total = self.greek_combo.currentData() in TOTAL_MODES
+        self.sign_combo.setEnabled(
+            not total and self.src_combo.currentData() != "dealer_flow")
+        self.units_combo.setEnabled(not total)
         self.result_cache.clear()
         self.canvas.request_rescale()
         if self.day is not None:

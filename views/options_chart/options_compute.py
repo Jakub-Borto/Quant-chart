@@ -23,6 +23,19 @@ EXPIRY_BUCKETS = ["All", "0DTE", "This Week", "Next Week",
 GREEK_LABELS = {"delta": "Delta", "gamma": "Gamma", "vanna": "Vanna", "charm": "Charm"}
 UNIT_LABELS = {"pct": "$ / 1% move", "point": "$ / 1 point", "contracts": "Contracts"}
 
+# toolbar (label, key) vocabularies — shared by the options bar chart and interval map
+GREEKS = [("Delta", "delta"), ("Gamma", "gamma"), ("Vanna", "vanna"), ("Charm", "charm"),
+          ("Total OI", "total_oi"), ("OI Split", "oi_split")]
+
+# raw-position modes: no greeks/IV, puts drawn positive / calls negative, contracts units
+TOTAL_MODES = ("total_oi", "oi_split")
+OI_SRCS = [("Open Interest", "open_interest"), ("Est. OI", "est_oi"),
+           ("Dealer Flow", "dealer_flow")]
+SIGNS = [("Calls long / Puts short", "calls_long"),
+         ("Puts long / Calls short", "puts_long"),
+         ("All long (gross)", "all_long")]
+UNITS = [("$ / 1% move", "pct"), ("$ / 1 point", "point"), ("Contracts", "contracts")]
+
 
 @dataclass(frozen=True)
 class ExposureParams:
@@ -34,6 +47,10 @@ class ExposureParams:
     r: float
 
 
+def units_label_for(params: "ExposureParams") -> str:
+    return "Contracts" if params.greek in TOTAL_MODES else UNIT_LABELS[params.units]
+
+
 @dataclass
 class StrikeExposure:
     strikes: np.ndarray      # float64 [n_strikes] (ref to day.strikes_sorted)
@@ -42,10 +59,14 @@ class StrikeExposure:
     fallback: np.ndarray     # dimmed component (est-OI fallback under dealer_flow)
     call_part: np.ndarray
     put_part: np.ndarray
-    n_contracts: np.ndarray  # int64, contracts included per strike
+    n_contracts: np.ndarray  # int64, option series (instruments) included per strike
+    oi_total: np.ndarray     # float64, summed raw open_interest per strike (tooltip)
+    put_fb: np.ndarray       # fallback portion of put_part (dimmed in split mode)
+    call_fb: np.ndarray      # fallback portion of call_part
     F: float
     time: pd.Timestamp
     units_label: str
+    split: bool = False      # oi_split: draw put_part up AND call_part down per strike
 
 
 def bucket_mask(day, bucket: str, anchor: datetime.date) -> np.ndarray:
@@ -109,22 +130,32 @@ def compute_exposure(day, t: int, params: ExposureParams,
     if not np.isfinite(F) or F <= 0:
         return None
 
+    total_mode = params.greek in TOTAL_MODES
     T = (day.expiry_ns - day.times_ns[t]) / YEAR_NS
-    iv = iv_at(day, t, params.r, iv_cache)
     bkey = ("_bucket", params.bucket)
     bmask = result_cache.get(bkey)
     if bmask is None:
         bmask = bucket_mask(day, params.bucket, pd.Timestamp(day.date).date())
         result_cache[bkey] = bmask
-    include = (T > T_MIN) & bmask & np.isfinite(iv)
 
-    delta, gamma, vanna, charm = greeks(F, day.strike, T, iv, params.r, day.cp)
-    g = {"delta": delta, "gamma": gamma, "vanna": vanna, "charm": charm}[params.greek]
+    if total_mode:
+        # raw position view — no greeks, no IV requirement (quote-less contracts count)
+        include = (T > T_MIN) & bmask
+        g = np.ones(day.n_inst)
+    else:
+        iv = iv_at(day, t, params.r, iv_cache)
+        include = (T > T_MIN) & bmask & np.isfinite(iv)
+        delta, gamma, vanna, charm = greeks(F, day.strike, T, iv, params.r, day.cp)
+        g = {"delta": delta, "gamma": gamma, "vanna": vanna, "charm": charm}[params.greek]
 
     # Signed dealer position per contract
-    sign_c = {"calls_long": day.cp.astype(np.float64),
-              "puts_long": -day.cp.astype(np.float64),
-              "all_long": np.ones(day.n_inst)}[params.sign_mode]
+    if total_mode:
+        # fixed split: puts positive (green, up), calls negative (red, down)
+        sign_c = -day.cp.astype(np.float64)
+    else:
+        sign_c = {"calls_long": day.cp.astype(np.float64),
+                  "puts_long": -day.cp.astype(np.float64),
+                  "all_long": np.ones(day.n_inst)}[params.sign_mode]
     if params.oi_source == "open_interest":
         pos_primary = sign_c * np.nan_to_num(day.oi[:, t].astype(np.float64))
         pos_fallback = np.zeros(day.n_inst)
@@ -137,14 +168,20 @@ def compute_exposure(day, t: int, params: ExposureParams,
         # fallback uses the FIXED naive convention (calls long / puts short).
         flow = day.flow[:, t].astype(np.float64)
         traded = np.isfinite(flow)
-        sign_fixed = day.cp.astype(np.float64)
-        pos_primary = np.where(traded, np.nan_to_num(flow), 0.0)
-        pos_fallback = np.where(traded, 0.0,
-                                sign_fixed * np.nan_to_num(day.est_oi[:, t].astype(np.float64)))
+        if total_mode:
+            # magnitude of the dealer book, split put+/call- like the other sources
+            pos_primary = np.where(traded, sign_c * np.abs(np.nan_to_num(flow)), 0.0)
+            pos_fallback = np.where(traded, 0.0,
+                                    sign_c * np.nan_to_num(day.est_oi[:, t].astype(np.float64)))
+        else:
+            sign_fixed = day.cp.astype(np.float64)
+            pos_primary = np.where(traded, np.nan_to_num(flow), 0.0)
+            pos_fallback = np.where(traded, 0.0,
+                                    sign_fixed * np.nan_to_num(day.est_oi[:, t].astype(np.float64)))
 
     # Unit scaling (vanna is per 1.00 sigma -> /100 per vol-pt; charm per year -> /365 per day)
     mult = day.mult
-    if params.units == "contracts":
+    if total_mode or params.units == "contracts":
         u = 1.0
     elif params.units == "point":
         u = mult
@@ -166,6 +203,7 @@ def compute_exposure(day, t: int, params: ExposureParams,
     call_part = np.zeros(n_s)
     put_part = np.zeros(n_s)
     n_contracts = np.zeros(n_s, dtype=np.int64)
+    oi_total = np.zeros(n_s)
     slots = day.strike_slot
     np.add.at(primary, slots, e_primary)
     np.add.at(fallback, slots, e_fallback)
@@ -174,12 +212,20 @@ def compute_exposure(day, t: int, params: ExposureParams,
     np.add.at(call_part, slots[is_call], e_total[is_call])
     np.add.at(put_part, slots[~is_call], e_total[~is_call])
     np.add.at(n_contracts, slots[include], 1)
+    oi_col = np.nan_to_num(day.oi[:, t].astype(np.float64))
+    np.add.at(oi_total, slots[include], oi_col[include])
+    put_fb = np.zeros(n_s)
+    call_fb = np.zeros(n_s)
+    np.add.at(call_fb, slots[is_call], e_fallback[is_call])
+    np.add.at(put_fb, slots[~is_call], e_fallback[~is_call])
 
     res = StrikeExposure(
         strikes=day.strikes_sorted, total=primary + fallback,
         primary=primary, fallback=fallback,
         call_part=call_part, put_part=put_part, n_contracts=n_contracts,
-        F=F, time=day.times[t], units_label=UNIT_LABELS[params.units],
+        oi_total=oi_total, put_fb=put_fb, call_fb=call_fb,
+        F=F, time=day.times[t], units_label=units_label_for(params),
+        split=params.greek == "oi_split",
     )
     result_cache[key] = res
     return res

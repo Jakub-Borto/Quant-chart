@@ -46,10 +46,11 @@ class OptionsOpenDialog(QDialog):
         date: str = "",
         time_start: str = "00:00",
         time_end: str = "23:59",
+        title: str = "Open  ·  Dealer Exposure",
         parent=None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Open  ·  Options Exposure")
+        self.setWindowTitle(title)
         self.setMinimumWidth(400)
 
         self.root             = root
