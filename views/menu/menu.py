@@ -19,6 +19,7 @@ from views.heatmap_chart.open_dialog import HeatmapOpenDialog
 from views.heatmap_chart.window import HeatmapWindow
 from views.options_chart.open_dialog import OptionsOpenDialog
 from views.options_chart.window import OptionsWindow
+from views.interval_map.window import IntervalMapWindow
 from views.trade_replay.window import TradeReplayWindow
 
 NO_ASSETS = "No assets found"
@@ -202,11 +203,12 @@ class MenuWindow(QMainWindow):
             ("Footprint Chart",  "Footprint & order flow",   lambda: self._open_chart("Footprint Chart", FootprintWindow)),
             ("Simple Chart",     "OHLCV multi-timeframe",    self._open_ohlcv_chart),
             ("DOM Heatmap",      "Order book liquidity",     self._open_heatmap_chart),
-            ("Options",          "Dealer exposure by strike", self._open_options_chart),
+            ("Dealer Exposure",  "Options exposure by strike", self._open_options_chart),
             ("Trade Replay",     "Backtest trade browser",   self._open_trade_replay),
+            ("Interval Map",     "Exposure through time",    self._open_interval_map),
         ]
 
-        positions = [(0, 0), (0, 1), (1, 0), (1, 1), (2, 0)]
+        positions = [(0, 0), (0, 1), (1, 0), (1, 1), (2, 0), (2, 1)]
         for (title, subtitle, handler), (row, col) in zip(charts, positions):
             btn = self._chart_button(title, subtitle)
             btn.clicked.connect(handler)
@@ -427,6 +429,29 @@ class MenuWindow(QMainWindow):
         )
         if dialog.exec() and dialog.config is not None:
             window = OptionsWindow(dialog.config)
+            window.show()
+            self.open_windows.append(window)
+
+    def _open_interval_map(self) -> None:
+        root = self.root_edit.text().strip()
+        if not root or not os.path.isdir(root):
+            QMessageBox.warning(self, "No data folder",
+                                "Pick a valid parquet folder first.")
+            return
+        dialog = OptionsOpenDialog(
+            root=root,
+            futures_folder=self.futures_combo.currentText(),
+            options_folder=self.options_combo.currentText(),
+            default_type=self.options_combo.currentText(),
+            default_asset=self.asset_combo.currentText(),
+            date=self.date_edit.date().toString("yyyy-MM-dd"),
+            time_start=self.start_edit.time().toString("HH:mm"),
+            time_end=self.end_edit.time().toString("HH:mm"),
+            title="Open  ·  Interval Map",
+            parent=self,
+        )
+        if dialog.exec() and dialog.config is not None:
+            window = IntervalMapWindow(dialog.config)
             window.show()
             self.open_windows.append(window)
 
