@@ -33,7 +33,6 @@ class IntervalMapWindow(QMainWindow):
         super().__init__(parent)
         self.config = config
         self._set_title()
-        self.showMaximized()
 
         self.settings = OptionsSettings.load()
         self.canvas = IntervalMapCanvas()
@@ -47,6 +46,8 @@ class IntervalMapWindow(QMainWindow):
         layout.addWidget(self._build_toolbar())
         layout.addWidget(self.canvas, 1)
         self.setCentralWidget(central)
+        # maximize once the layout exists, so the canvas is sized before loading
+        self.showMaximized()
 
         self._reload_chart_data()
 

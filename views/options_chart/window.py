@@ -29,7 +29,6 @@ class OptionsWindow(QMainWindow):
         super().__init__(parent)
         self.config = config
         self._set_title()
-        self.showMaximized()
 
         self.settings = OptionsSettings.load()
         self.canvas = OptionsCanvas(self.settings)
@@ -48,6 +47,8 @@ class OptionsWindow(QMainWindow):
         layout.addWidget(self.canvas, 1)
         layout.addWidget(self._build_slider_bar())
         self.setCentralWidget(central)
+        # maximize once the layout exists, so the canvas is sized before loading
+        self.showMaximized()
 
         self._reload_chart_data()
 

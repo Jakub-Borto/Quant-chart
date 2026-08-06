@@ -363,7 +363,7 @@ class MenuWindow(QMainWindow):
         )
         if dialog.exec() and dialog.config is not None:
             window = window_cls(dialog.config)
-            window.show()
+            window.showMaximized()
             self.open_windows.append(window)
 
     def _open_ohlcv_chart(self) -> None:
@@ -385,7 +385,7 @@ class MenuWindow(QMainWindow):
         )
         if dialog.exec() and dialog.config is not None:
             window = OhlcvWindow(dialog.config)
-            window.show()
+            window.showMaximized()
             self.open_windows.append(window)
 
     def _open_heatmap_chart(self) -> None:
@@ -407,7 +407,7 @@ class MenuWindow(QMainWindow):
         )
         if dialog.exec() and dialog.config is not None:
             window = HeatmapWindow(dialog.config)
-            window.show()
+            window.showMaximized()
             self.open_windows.append(window)
 
     def _open_options_chart(self) -> None:
@@ -429,7 +429,7 @@ class MenuWindow(QMainWindow):
         )
         if dialog.exec() and dialog.config is not None:
             window = OptionsWindow(dialog.config)
-            window.show()
+            window.showMaximized()
             self.open_windows.append(window)
 
     def _open_interval_map(self) -> None:
@@ -452,12 +452,12 @@ class MenuWindow(QMainWindow):
         )
         if dialog.exec() and dialog.config is not None:
             window = IntervalMapWindow(dialog.config)
-            window.show()
+            window.showMaximized()
             self.open_windows.append(window)
 
     def _open_trade_replay(self) -> None:
         window = TradeReplayWindow(menu=self)
-        window.show()
+        window.showMaximized()
         # no set_date attr -> _live_windows() keeps it out of date pushes
         self.open_windows.append(window)
 
